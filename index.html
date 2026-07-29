@@ -4219,6 +4219,10 @@
         } else {
             loadVoices();
         }
+        // Một số trình duyệt di động (đặc biệt Chrome trên iOS) load danh sách giọng bị trễ
+        // hoặc không bắn event onvoiceschanged đúng lúc -> thử tải lại vài lần trong vài giây đầu.
+        loadVoices();
+        [300, 1000, 2000, 4000].forEach(delay => setTimeout(loadVoices, delay));
 
         function speakText() { 
             const text = document.getElementById('ttsInput').value.trim(); 
@@ -4235,6 +4239,7 @@
             isPlayingLoop = false;
             hideTTSPanel();
             const utterThis = new SpeechSynthesisUtterance(text);
+            utterThis.lang = 'en-US'; // Luôn ép ngôn ngữ tiếng Anh, tránh trình duyệt tự đọc theo ngôn ngữ hệ thống máy
             if (autoSelectedVoice) utterThis.voice = autoSelectedVoice;
             utterThis.rate = 0.9; 
             synth.speak(utterThis);
@@ -4288,6 +4293,7 @@
             document.getElementById('ttsProgressBar').style.width = `${progressPercent}%`;
 
             const utterThis = new SpeechSynthesisUtterance(text);
+            utterThis.lang = 'en-US'; // Luôn ép ngôn ngữ tiếng Anh, tránh trình duyệt tự đọc theo ngôn ngữ hệ thống máy
             if (autoSelectedVoice) utterThis.voice = autoSelectedVoice;
             utterThis.rate = 0.9;
 
