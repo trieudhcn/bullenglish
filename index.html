@@ -4185,10 +4185,22 @@
             const engVoices = voiceList.filter(v => v.lang.toLowerCase().includes('en-'));
             if (engVoices.length === 0) return null;
 
-            const preferredUS = engVoices.find(v => /en-us/i.test(v.lang) && /natural|google|microsoft|online/i.test(v.name));
+            // Ưu tiên các giọng cụ thể được biết là nghe tự nhiên trên từng nền tảng
+            // (iOS/Safari/Chrome-iOS: Samantha, Ava; Android/Chrome desktop: Google US English; Windows: Microsoft...)
+            const knownGoodNames = ['samantha', 'ava', 'google us english', 'microsoft aria', 'microsoft jenny', 'zoe', 'allison'];
+            for (const name of knownGoodNames) {
+                const match = engVoices.find(v => v.name.toLowerCase().includes(name) && /en-us/i.test(v.lang));
+                if (match) return match;
+            }
+            for (const name of knownGoodNames) {
+                const match = engVoices.find(v => v.name.toLowerCase().includes(name));
+                if (match) return match;
+            }
+
+            const preferredUS = engVoices.find(v => /en-us/i.test(v.lang) && /natural|google|microsoft|online|enhanced|premium/i.test(v.name));
             if (preferredUS) return preferredUS;
 
-            const anyPreferred = engVoices.find(v => /natural|google|microsoft|online/i.test(v.name));
+            const anyPreferred = engVoices.find(v => /natural|google|microsoft|online|enhanced|premium/i.test(v.name));
             if (anyPreferred) return anyPreferred;
 
             const usVoice = engVoices.find(v => /en-us/i.test(v.lang));
