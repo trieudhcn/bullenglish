@@ -385,13 +385,6 @@
                 </div>
             </div>
 
-            <div class="px-2">
-                <label class="block text-[9px] font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
-                    <i data-lucide="user-cog" class="w-3 h-3 text-indigo-400"></i> Giọng đọc hệ thống
-                </label>
-                <select id="voiceSelect" onchange="saveGlobalVoiceSetting()" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-indigo-500"></select>
-            </div>
-
             <div class="grid grid-cols-2 gap-2 pt-1">
                 <button onclick="exportAllData()" class="flex items-center justify-center gap-1 bg-slate-800 hover:bg-indigo-600 text-[10px] py-2 rounded-lg font-medium transition cursor-pointer text-slate-200">
                     <i data-lucide="download" class="w-3 h-3"></i> Xuất file
@@ -4182,47 +4175,37 @@
         }
 
         // --- SPEECH SYNTHESIS ENGINE ---
-        const synth = window.speechSynthesis; 
-        const voiceSelect = document.getElementById('voiceSelect'); 
+        const synth = window.speechSynthesis;
         let voices = [];
+        let autoSelectedVoice = null;
+
+        // Tự động chọn giọng đọc tiếng Anh tốt nhất có sẵn trên trình duyệt (ưu tiên giọng tự nhiên/Google/Microsoft),
+        // không cần người dùng chọn tay nữa.
+        function pickBestEnglishVoice(voiceList) {
+            const engVoices = voiceList.filter(v => v.lang.toLowerCase().includes('en-'));
+            if (engVoices.length === 0) return null;
+
+            const preferredUS = engVoices.find(v => /en-us/i.test(v.lang) && /natural|google|microsoft|online/i.test(v.name));
+            if (preferredUS) return preferredUS;
+
+            const anyPreferred = engVoices.find(v => /natural|google|microsoft|online/i.test(v.name));
+            if (anyPreferred) return anyPreferred;
+
+            const usVoice = engVoices.find(v => /en-us/i.test(v.lang));
+            if (usVoice) return usVoice;
+
+            return engVoices[0];
+        }
 
         function loadVoices() {
-            voices = synth.getVoices(); 
-            voiceSelect.innerHTML = '';
-            const engVoices = voices.filter(v => v.lang.toLowerCase().includes('en-'));
-            if (engVoices.length === 0) {
-                const opt = document.createElement('option'); 
-                opt.value = ""; 
-                opt.text = "Giọng mặc định";
-                voiceSelect.appendChild(opt); 
-                return;
-            }
-            engVoices.sort((a, b) => {
-                const aNatural = a.name.includes('Natural') || a.name.includes('Google');
-                const bNatural = b.name.includes('Natural') || b.name.includes('Google');
-                return bNatural - aNatural;
-            });
-            engVoices.forEach(voice => {
-                const option = document.createElement('option'); 
-                option.value = voice.name; 
-                option.text = `${voice.name} (${voice.lang})`;
-                voiceSelect.appendChild(option);
-            });
-            const savedVoice = localStorage.getItem('global_speech_voice');
-            if (savedVoice) {
-                voiceSelect.value = savedVoice;
-            }
+            voices = synth.getVoices();
+            autoSelectedVoice = pickBestEnglishVoice(voices);
         }
 
         if (speechSynthesis.onvoiceschanged !== undefined) {
             speechSynthesis.onvoiceschanged = loadVoices; 
         } else {
             loadVoices();
-        }
-
-        function saveGlobalVoiceSetting() {
-            localStorage.setItem('global_speech_voice', voiceSelect.value);
-            showToast('Đã đổi giọng đọc mặc định!');
         }
 
         function speakText() { 
@@ -4240,10 +4223,7 @@
             isPlayingLoop = false;
             hideTTSPanel();
             const utterThis = new SpeechSynthesisUtterance(text);
-            if (voiceSelect.value) {
-                const targetVoice = voices.find(v => v.name === voiceSelect.value);
-                if (targetVoice) utterThis.voice = targetVoice;
-            }
+            if (autoSelectedVoice) utterThis.voice = autoSelectedVoice;
             utterThis.rate = 0.9; 
             synth.speak(utterThis);
         }
@@ -4296,10 +4276,7 @@
             document.getElementById('ttsProgressBar').style.width = `${progressPercent}%`;
 
             const utterThis = new SpeechSynthesisUtterance(text);
-            if (voiceSelect.value) {
-                const targetVoice = voices.find(v => v.name === voiceSelect.value);
-                if (targetVoice) utterThis.voice = targetVoice;
-            }
+            if (autoSelectedVoice) utterThis.voice = autoSelectedVoice;
             utterThis.rate = 0.9;
 
             utterThis.onend = function() {
