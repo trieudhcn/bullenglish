@@ -4596,9 +4596,13 @@
             'daily_sentences', 'comm_topics', 'topic_sentences', 'paragraph_list', 'quick_saved_vocab',
             'srs_state', 'quiz_history', 'daily_goal', 'activity_log'];
         const _originalLocalStorageSetItem = localStorage.setItem.bind(localStorage);
+        let isApplyingCloudData = false; // true trong lúc đang áp dữ liệu Cloud về máy, để không tự tính là "vừa sửa"
         localStorage.setItem = function(key, value) {
             _originalLocalStorageSetItem(key, value);
-            if (CLOUD_SYNCED_KEYS.includes(key)) scheduleAutoCloudSync();
+            if (CLOUD_SYNCED_KEYS.includes(key) && !isApplyingCloudData) {
+                _originalLocalStorageSetItem('local_last_modified', new Date().toISOString());
+                scheduleAutoCloudSync();
+            }
         };
 
         let autoSyncTimer = null;
@@ -4700,6 +4704,8 @@
             const bundle = buildFullDataBundle();
             firestoreDb.collection('users').doc(currentCloudUser.uid).set(bundle)
                 .then(() => {
+                    // Đánh dấu máy này đã ở trạng thái khớp với đúng phiên bản vừa đẩy lên (tránh so lệch mốc thời gian lần sau)
+                    _originalLocalStorageSetItem('local_last_modified', bundle.syncedAt);
                     if (!silent) showToast('Đã lưu toàn bộ dữ liệu lên Cloud! ☁️', 'success');
                     const indicator = document.getElementById('cloudSyncIndicator');
                     const timeStr = new Date().toLocaleString('vi-VN');
@@ -4713,7 +4719,8 @@
                 });
         }
 
-        function applyCloudBundleToLocal(data) {
+        function applyCloudBundleToLocal(data, silent = false) {
+            isApplyingCloudData = true;
             englishData = data.structures || englishData;
             grammarTopics = data.grammarTopics || grammarTopics;
             grammarSentences = data.grammarSentences || grammarSentences;
@@ -4740,9 +4747,14 @@
             if (data.dailyGoal) localStorage.setItem('daily_goal', data.dailyGoal);
             if (data.activityLog) localStorage.setItem('activity_log', JSON.stringify(data.activityLog));
 
+            isApplyingCloudData = false;
+            // Sau khi tải về, máy này coi như đã khớp với đúng phiên bản Cloud vừa nhận
+            const syncMarker = data.syncedAt || new Date().toISOString();
+            _originalLocalStorageSetItem('local_last_modified', syncMarker);
+
             refreshActiveTab();
             updateSrsDueCount();
-            showToast('Đã tải dữ liệu từ Cloud về máy này! 🎉', 'success');
+            if (!silent) showToast('Đã tải dữ liệu từ Cloud về máy này! 🎉', 'success');
         }
 
         function loadAllDataFromCloud() {
@@ -4758,30 +4770,32 @@
             }).catch(err => showToast('Lỗi khi tải từ Cloud: ' + err.message, 'error'));
         }
 
-        // Khi vừa đăng nhập: nếu máy đang trống dữ liệu -> tự tải Cloud về luôn (an toàn, không mất gì).
-        // Nếu máy đã có dữ liệu -> vẫn hỏi xác nhận trước khi ghi đè, để tránh mất dữ liệu ngoài ý muốn.
-        function isLocalDataEmpty() {
-            return paragraphList.length === 0 && grammarSentences.length === 0 &&
-                dailySentences.length === 0 && topicSentences.length === 0 &&
-                Object.keys(srsState).length === 0;
-        }
-
+        // Khi vừa đăng nhập (hoặc mỗi lần mở app mà đã đăng nhập sẵn): tự so sánh thời điểm
+        // thay đổi gần nhất giữa máy này và Cloud, rồi tự đồng bộ theo chiều hợp lý - KHÔNG hỏi xác nhận.
         function checkCloudDataOnSignIn() {
             firestoreDb.collection('users').doc(currentCloudUser.uid).get().then(doc => {
-                if (doc.exists && doc.data().syncedAt) {
-                    document.getElementById('cloudLastSyncText').innerText = `Đồng bộ lần cuối: ${new Date(doc.data().syncedAt).toLocaleString('vi-VN')}`;
-                    if (isLocalDataEmpty()) {
-                        applyCloudBundleToLocal(doc.data());
-                        showToast('Đã tự động tải dữ liệu từ Cloud về! ☁️', 'success');
-                    } else {
-                        showConfirm('Tìm thấy dữ liệu trên Cloud', 'Tài khoản này đã có dữ liệu lưu trên Cloud, và máy này cũng đang có dữ liệu sẵn. Bạn muốn tải dữ liệu Cloud về dùng trên máy này không? (Dữ liệu hiện tại trên máy sẽ bị ghi đè)', () => {
-                            applyCloudBundleToLocal(doc.data());
-                        });
-                    }
-                } else {
-                    showToast('Chưa có dữ liệu Cloud cho tài khoản này. Từ giờ mọi thay đổi sẽ tự động đồng bộ lên Cloud!', 'info');
+                if (!doc.exists || !doc.data().syncedAt) {
+                    // Chưa có dữ liệu nào trên Cloud cho tài khoản này -> tự đẩy dữ liệu hiện tại của máy này lên
+                    saveAllDataToCloud(true);
+                    return;
+                }
+
+                const cloudData = doc.data();
+                document.getElementById('cloudLastSyncText').innerText = `Đồng bộ lần cuối: ${new Date(cloudData.syncedAt).toLocaleString('vi-VN')}`;
+
+                const cloudTime = new Date(cloudData.syncedAt).getTime();
+                const localModifiedRaw = localStorage.getItem('local_last_modified');
+                const localTime = localModifiedRaw ? new Date(localModifiedRaw).getTime() : 0;
+
+                if (cloudTime > localTime + 1000) {
+                    // Cloud có bản mới hơn máy này -> tự động tải về, không hỏi
+                    applyCloudBundleToLocal(cloudData, true);
+                    showToast('Đã tự động cập nhật dữ liệu mới nhất từ Cloud ☁️', 'info');
+                } else if (localTime > cloudTime + 1000) {
+                    // Máy này có thay đổi mới hơn Cloud (ví dụ vừa sửa lúc chưa có mạng) -> tự động đẩy lên
                     saveAllDataToCloud(true);
                 }
+                // Nếu 2 mốc thời gian gần như bằng nhau -> đã đồng bộ, không cần làm gì thêm
             });
         }
 
