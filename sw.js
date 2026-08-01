@@ -27,7 +27,20 @@ self.addEventListener('activate', (event) => {
 });
 
 // Chiến lược: Network-first cho trang HTML chính (để luôn lấy bản mới nhất khi có mạng),
-// rơi về cache khi mất mạng. Các request khác (CDN, API...) đi thẳng qua mạng như bình thường.
+// rơi về cache khi mất mạng HOẶC khi mạng phản hồi quá chậm (không chờ vô hạn, tránh treo app).
+// Các request khác (CDN, API...) đi thẳng qua mạng như bình thường.
+const NETWORK_TIMEOUT_MS = 4000;
+
+function fetchWithTimeout(request, timeoutMs) {
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('network-timeout')), timeoutMs);
+        fetch(request).then(
+            (res) => { clearTimeout(timer); resolve(res); },
+            (err) => { clearTimeout(timer); reject(err); }
+        );
+    });
+}
+
 self.addEventListener('fetch', (event) => {
     if (event.request.method !== 'GET') return;
 
@@ -37,13 +50,13 @@ self.addEventListener('fetch', (event) => {
 
     if (isSameOrigin && isHtmlNavigation) {
         event.respondWith(
-            fetch(event.request)
+            fetchWithTimeout(event.request, NETWORK_TIMEOUT_MS)
                 .then((response) => {
                     const clone = response.clone();
                     caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
                     return response;
                 })
-                .catch(() => caches.match(event.request))
+                .catch(() => caches.match(event.request).then((cached) => cached || Response.error()))
         );
     }
 });
